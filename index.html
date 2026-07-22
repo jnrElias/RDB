@@ -50,6 +50,7 @@
       </div>
       <div class="topbar-actions">
         <span id="save-state" class="save-state">Guardado</span>
+        <button id="btn-sync" class="btn-ghost" title="Sincronizar entre dispositivos">☁ <span id="sync-label">Sincronizar</span></button>
         <button id="btn-export" class="btn-ghost" title="Descargar copia de seguridad cifrada">⬇ Copia</button>
         <button id="btn-import" class="btn-ghost" title="Restaurar copia de seguridad">⬆ Restaurar</button>
         <input id="import-file" type="file" accept="application/json,.json" hidden />
@@ -67,6 +68,57 @@
         No tienes semanas todavía. Pulsa <strong>“Añadir semana”</strong> para empezar.
       </div>
     </main>
+  </div>
+
+  <!-- ===================== SYNC MODAL ===================== -->
+  <div id="sync-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close="1"></div>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>☁ Sincronización entre dispositivos</h3>
+        <button class="modal-x" data-close="1" aria-label="Cerrar">✕</button>
+      </div>
+      <p class="modal-desc">
+        Tus datos se guardan <strong>cifrados</strong> en tu repositorio de GitHub. Así puedes
+        verlos y editarlos desde el móvil y otros ordenadores. Necesitas un
+        <strong>token de acceso</strong> (se guarda cifrado en este dispositivo, nunca en el código).
+      </p>
+
+      <div class="modal-fields">
+        <div class="field">
+          <label for="sync-owner">Usuario / organización</label>
+          <input id="sync-owner" class="field-input" type="text" placeholder="jnrElias" />
+        </div>
+        <div class="field">
+          <label for="sync-repo">Repositorio</label>
+          <input id="sync-repo" class="field-input" type="text" placeholder="RDB" />
+        </div>
+        <div class="field">
+          <label for="sync-branch">Rama</label>
+          <input id="sync-branch" class="field-input" type="text" placeholder="main" />
+        </div>
+        <div class="field">
+          <label for="sync-path">Ruta del archivo</label>
+          <input id="sync-path" class="field-input" type="text" placeholder="vault/vault.enc.json" />
+        </div>
+        <div class="field">
+          <label for="sync-token">Token de acceso (fine-grained PAT)</label>
+          <input id="sync-token" class="field-input" type="password" placeholder="github_pat_..." autocomplete="off" />
+          <p class="field-hint">
+            Créalo en GitHub → Settings → Developer settings → Fine-grained tokens, con permiso
+            <strong>Contents: Read and write</strong> solo en este repositorio.
+          </p>
+        </div>
+      </div>
+
+      <div id="sync-status" class="sync-status"></div>
+
+      <div class="modal-actions">
+        <button id="sync-save" class="btn-primary">Conectar y sincronizar</button>
+        <button id="sync-now" class="btn-ghost" hidden>Sincronizar ahora</button>
+        <button id="sync-disconnect" class="btn-ghost danger" hidden>Desconectar</button>
+      </div>
+    </div>
   </div>
 
   <!-- toast -->

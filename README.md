@@ -52,12 +52,48 @@ Esta web es **100% estática** (no tiene servidor). Eso implica:
   contraseña por fuerza bruta contra el hash. Por eso conviene usar una
   contraseña larga y única. Puedes cambiarla en cualquier momento (ver abajo).
 
-### Sincronización entre dispositivos
+### ¿Puedo tener el repositorio en privado?
 
-Los datos se guardan **en cada dispositivo** (almacenamiento local cifrado). Para
-mover tu información de un dispositivo a otro, usa el botón **Copia** (descarga un
-archivo cifrado) y **Restaurar** en el otro dispositivo. El archivo solo se puede
-abrir con tu contraseña.
+- En el **plan gratuito de GitHub**, GitHub Pages **solo publica desde repos
+  públicos**. Para publicar desde un repo **privado** necesitas **GitHub Pro**.
+- No es necesario para tu privacidad: el código no contiene secretos (solo hashes)
+  y **todos tus datos van cifrados**. Un repo público es perfectamente seguro aquí.
+- Si aun así quieres todo privado, la opción es GitHub Pro (o alojar los archivos
+  estáticos en otro sitio, p. ej. Cloudflare Pages, que sí permite repos privados
+  gratis).
+
+## ☁️ Sincronización entre dispositivos (con GitHub)
+
+La web puede **guardar y sincronizar tus datos usando tu propio repositorio de
+GitHub**, sin ningún servidor extra. Así ves y editas todo desde el móvil y otros
+ordenadores. Tus datos se guardan en un archivo **cifrado** (`vault/vault.enc.json`),
+por lo que aunque el repo sea público nadie puede leer su contenido.
+
+### Cómo activarla (una vez por dispositivo)
+
+1. Crea un **token de acceso** en GitHub:
+   - **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+   - *Repository access*: solo este repositorio (`RDB`).
+   - *Permissions → Repository permissions → Contents*: **Read and write**.
+   - Copia el token (empieza por `github_pat_...`).
+2. En la web, pulsa **☁ Sincronizar** (arriba a la derecha).
+3. Deja los valores por defecto (usuario `jnrElias`, repo `RDB`, rama `main`,
+   ruta `vault/vault.enc.json`) y pega el token.
+4. Pulsa **Conectar y sincronizar**. ¡Listo!
+
+En cada dispositivo nuevo, repite los pasos 2–4 con el mismo token (o crea uno por
+dispositivo). El token se guarda **cifrado en el dispositivo**, nunca en el código.
+
+- Los cambios se suben solos unos segundos después de escribir.
+- Al abrir la web o volver a la pestaña, se descarga automáticamente lo más reciente.
+- Regla ante conflictos: gana la última edición (por marca de tiempo). Evita editar
+  el mismo día en dos dispositivos a la vez.
+
+### Alternativa sin token: copia manual
+
+Si prefieres no usar token, están los botones **Copia** (descarga un archivo
+cifrado) y **Restaurar** (en el otro dispositivo). El archivo solo se abre con tu
+contraseña.
 
 ## 🔁 Cambiar el correo o la contraseña
 

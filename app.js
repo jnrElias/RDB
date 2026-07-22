@@ -93,6 +93,7 @@ async function decryptData(key, payload) {
 const DB_NAME = 'yt_studio_vault';
 const STORE = 'vault';
 const RECORD_KEY = 'data';
+const SYNC_KEY = 'sync';
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -104,20 +105,29 @@ function openDB() {
     req.onerror = () => reject(req.error);
   });
 }
-async function dbGet() {
+async function dbGet(key = RECORD_KEY) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readonly');
-    const req = tx.objectStore(STORE).get(RECORD_KEY);
+    const req = tx.objectStore(STORE).get(key);
     req.onsuccess = () => resolve(req.result || null);
     req.onerror = () => reject(req.error);
   });
 }
-async function dbSet(payload) {
+async function dbSet(payload, key = RECORD_KEY) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put(payload, RECORD_KEY);
+    tx.objectStore(STORE).put(payload, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function dbDel(key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -153,7 +163,17 @@ function newWeek(index) {
   };
 }
 function defaultState() {
-  return { weeks: [newWeek(1), newWeek(2)] };
+  // updatedAt=0 => un estado por defecto "sin tocar" siempre pierde frente a datos reales.
+  return { weeks: [newWeek(1), newWeek(2)], meta: { updatedAt: 0, rev: 0 } };
+}
+function ensureMeta(s) {
+  if (!s.meta) s.meta = { updatedAt: Date.now(), rev: 1 };
+  return s;
+}
+function bumpMeta() {
+  ensureMeta(state);
+  state.meta.updatedAt = Date.now();
+  state.meta.rev = (state.meta.rev || 0) + 1;
 }
 
 /* =========================================================================
@@ -183,9 +203,11 @@ async function persist() {
   }
 }
 function scheduleSave() {
+  bumpMeta();
   markSaving();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persist, 500);
+  scheduleRemotePush();
 }
 
 /* =========================================================================
@@ -419,9 +441,11 @@ function importBackup(file) {
       const data = await decryptData(cryptoKey, payload); // solo funciona con TU contraseña
       if (!data || !Array.isArray(data.weeks)) throw new Error('Contenido no válido');
       if (!confirm('Esto reemplazará tus datos actuales por los de la copia. ¿Continuar?')) return;
-      state = data;
+      state = ensureMeta(data);
+      bumpMeta();
       renderAll();
       await persist();
+      scheduleRemotePush();
       toast('Copia restaurada', 'ok');
     } catch (e) {
       console.error(e);
@@ -430,6 +454,167 @@ function importBackup(file) {
   };
   reader.onerror = () => toast('No se pudo leer el archivo', 'err');
   reader.readAsText(file);
+}
+
+/* =========================================================================
+   SINCRONIZACIÓN ENTRE DISPOSITIVOS (API de GitHub)
+   -------------------------------------------------------------------------
+   El "vault" (todo tu contenido) se guarda CIFRADO en un archivo del repo.
+   El token de acceso se guarda cifrado en este dispositivo (nunca en el código).
+   Estrategia: última escritura gana, comparando meta.updatedAt.
+   ========================================================================= */
+let sync = null;          // { owner, repo, branch, path, token }
+let remoteSha = null;     // sha del archivo remoto (para actualizarlo)
+let remotePushTimer = null;
+let syncing = false;
+
+async function loadSyncConfig() {
+  sync = null;
+  remoteSha = null;
+  if (!cryptoKey) return;
+  const enc = await dbGet(SYNC_KEY);
+  if (!enc) return;
+  try { sync = await decryptData(cryptoKey, enc); } catch (e) { console.error('sync cfg', e); }
+}
+async function saveSyncConfig() {
+  if (!sync) { await dbDel(SYNC_KEY); return; }
+  const payload = await encryptData(cryptoKey, sync);
+  await dbSet(payload, SYNC_KEY);
+}
+
+async function ghFetch(subpath, opts = {}) {
+  const url = `https://api.github.com/repos/${sync.owner}/${sync.repo}${subpath}`;
+  return fetch(url, {
+    ...opts,
+    headers: {
+      'Authorization': 'Bearer ' + sync.token,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(opts.headers || {}),
+    },
+  });
+}
+
+// Descarga el vault remoto (o null si no existe todavía).
+async function remotePull() {
+  const res = await ghFetch(`/contents/${sync.path}?ref=${encodeURIComponent(sync.branch)}&t=${Date.now()}`, {
+    headers: { 'Cache-Control': 'no-cache' },
+  });
+  if (res.status === 404) { remoteSha = null; return null; }
+  if (res.status === 401 || res.status === 403) throw new Error('Token sin permisos o caducado');
+  if (!res.ok) throw new Error('GitHub GET ' + res.status);
+  const json = await res.json();
+  remoteSha = json.sha;
+  const contentStr = decodeURIComponent(escape(atob((json.content || '').replace(/\n/g, ''))));
+  const payload = JSON.parse(contentStr);
+  return await decryptData(cryptoKey, payload);
+}
+
+// Sube el estado local al repo (crea o actualiza el archivo).
+async function remotePush() {
+  const payload = await encryptData(cryptoKey, state);
+  const contentStr = JSON.stringify(payload);
+  const b64 = btoa(unescape(encodeURIComponent(contentStr)));
+  const body = {
+    message: 'chore(vault): update ' + new Date().toISOString(),
+    content: b64,
+    branch: sync.branch,
+  };
+  if (remoteSha) body.sha = remoteSha;
+  let res = await ghFetch(`/contents/${sync.path}`, { method: 'PUT', body: JSON.stringify(body) });
+
+  // Conflicto: otro dispositivo escribió. Resolvemos por marca de tiempo.
+  if (res.status === 409 || res.status === 422) {
+    const remote = await remotePull(); // refresca remoteSha
+    if (remote && remote.meta && remote.meta.updatedAt > (state.meta?.updatedAt || 0)) {
+      state = ensureMeta(remote);
+      renderAll();
+      await persistLocalOnly();
+      toast('Se cargó una versión más reciente de otro dispositivo', 'ok');
+      return;
+    }
+    body.sha = remoteSha;
+    res = await ghFetch(`/contents/${sync.path}`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+  if (!res.ok) throw new Error('GitHub PUT ' + res.status);
+  const json = await res.json();
+  remoteSha = json.content && json.content.sha;
+}
+
+async function persistLocalOnly() {
+  if (!cryptoKey || !state) return;
+  const payload = await encryptData(cryptoKey, state);
+  await dbSet(payload);
+}
+
+function setSyncBadge(mode) {
+  const btn = $('#btn-sync');
+  const label = $('#sync-label');
+  btn.classList.toggle('on', !!sync && mode !== 'off');
+  btn.classList.toggle('syncing', mode === 'syncing');
+  if (label) label.textContent = sync ? (mode === 'syncing' ? 'Sincronizando' : 'Sincronizado') : 'Sincronizar';
+}
+
+// Decide entre estado local y remoto y los reconcilia por marca de tiempo.
+// Gana el que tenga meta.updatedAt más reciente (un estado por defecto vale 0).
+async function reconcile() {
+  const remote = await remotePull();
+  if (remote && remote.meta && remote.meta.updatedAt >= (state.meta?.updatedAt || 0)) {
+    state = ensureMeta(remote);
+    renderAll();
+    await persistLocalOnly();
+    return 'pulled';
+  }
+  await remotePush(); // local más reciente (o remoto vacío)
+  return 'pushed';
+}
+
+// Sincroniza al entrar.
+async function syncOnLogin() {
+  await loadSyncConfig();
+  if (!sync) { setSyncBadge('off'); return; }
+  setSyncBadge('syncing');
+  try {
+    await reconcile();
+    setSyncBadge('idle');
+  } catch (e) {
+    console.error('syncOnLogin', e);
+    setSyncBadge('idle');
+    toast('No se pudo sincronizar: ' + e.message, 'err');
+  }
+}
+
+function scheduleRemotePush() {
+  if (!sync) return;
+  setSyncBadge('syncing');
+  clearTimeout(remotePushTimer);
+  remotePushTimer = setTimeout(async () => {
+    if (syncing) { scheduleRemotePush(); return; }
+    syncing = true;
+    try { await remotePush(); setSyncBadge('idle'); }
+    catch (e) { console.error('push', e); setSyncBadge('idle'); toast('Fallo al subir cambios', 'err'); }
+    finally { syncing = false; }
+  }, 2200);
+}
+
+async function syncNow() {
+  if (!sync) return false;
+  if (syncing) return true;
+  syncing = true;
+  setSyncBadge('syncing');
+  try {
+    const result = await reconcile();
+    setSyncBadge('idle');
+    toast(result === 'pulled' ? 'Actualizado desde la nube' : 'Cambios subidos', 'ok');
+    return true;
+  } catch (e) {
+    console.error('syncNow', e);
+    setSyncBadge('idle');
+    toast('Error: ' + e.message, 'err');
+    return false;
+  } finally {
+    syncing = false;
+  }
 }
 
 /* =========================================================================
@@ -444,7 +629,7 @@ async function unlock(email, password) {
   const stored = await dbGet();
   if (stored) {
     try {
-      state = await decryptData(cryptoKey, stored);
+      state = ensureMeta(await decryptData(cryptoKey, stored));
     } catch (e) {
       // Datos existentes que no se pueden descifrar con esta clave
       console.error('No se pudo descifrar el almacén', e);
@@ -461,16 +646,21 @@ function enterApp() {
   $('#lock-screen').hidden = true;
   $('#app').hidden = false;
   renderAll();
+  syncOnLogin(); // en segundo plano: descarga/sube lo más reciente
 }
 
 function lockApp() {
   cryptoKey = null;
   state = null;
+  sync = null;
+  remoteSha = null;
   clearTimeout(saveTimer);
+  clearTimeout(remotePushTimer);
   $('#app').hidden = true;
   $('#lock-screen').hidden = false;
   $('#password').value = '';
   $('#weeks').innerHTML = '';
+  setSyncBadge('off');
 }
 
 /* =========================================================================
@@ -528,6 +718,84 @@ document.addEventListener('DOMContentLoaded', () => {
     const file = e.target.files && e.target.files[0];
     if (file) importBackup(file);
     e.target.value = '';
+  });
+
+  /* ---------- Modal de sincronización ---------- */
+  const modal = $('#sync-modal');
+  const statusEl = $('#sync-status');
+
+  function openSyncModal() {
+    $('#sync-owner').value = (sync && sync.owner) || 'jnrElias';
+    $('#sync-repo').value = (sync && sync.repo) || 'RDB';
+    $('#sync-branch').value = (sync && sync.branch) || 'main';
+    $('#sync-path').value = (sync && sync.path) || 'vault/vault.enc.json';
+    $('#sync-token').value = (sync && sync.token) || '';
+    statusEl.textContent = sync ? '✓ Sincronización activa en este dispositivo.' : '';
+    statusEl.className = 'sync-status' + (sync ? ' ok' : '');
+    $('#sync-now').hidden = !sync;
+    $('#sync-disconnect').hidden = !sync;
+    $('#sync-save').textContent = sync ? 'Guardar cambios' : 'Conectar y sincronizar';
+    modal.hidden = false;
+  }
+  function closeSyncModal() { modal.hidden = true; }
+
+  $('#btn-sync').addEventListener('click', openSyncModal);
+  modal.addEventListener('click', e => { if (e.target.dataset.close) closeSyncModal(); });
+
+  $('#sync-save').addEventListener('click', async () => {
+    const owner = $('#sync-owner').value.trim();
+    const repo = $('#sync-repo').value.trim();
+    const branch = $('#sync-branch').value.trim() || 'main';
+    const path = $('#sync-path').value.trim() || 'vault/vault.enc.json';
+    const token = $('#sync-token').value.trim();
+    if (!owner || !repo || !token) {
+      statusEl.textContent = 'Rellena usuario, repositorio y token.';
+      statusEl.className = 'sync-status err';
+      return;
+    }
+    statusEl.textContent = 'Conectando…';
+    statusEl.className = 'sync-status';
+    sync = { owner, repo, branch, path, token };
+    remoteSha = null;
+    const ok = await syncNow();
+    if (ok) {
+      await saveSyncConfig();
+      setSyncBadge('idle');
+      statusEl.textContent = '✓ Conectado y sincronizado.';
+      statusEl.className = 'sync-status ok';
+      $('#sync-now').hidden = false;
+      $('#sync-disconnect').hidden = false;
+      $('#sync-save').textContent = 'Guardar cambios';
+    } else {
+      sync = null;
+      statusEl.textContent = 'No se pudo conectar. Revisa el token y los permisos (Contents: Read and write).';
+      statusEl.className = 'sync-status err';
+    }
+  });
+
+  $('#sync-now').addEventListener('click', async () => {
+    statusEl.textContent = 'Sincronizando…';
+    statusEl.className = 'sync-status';
+    const ok = await syncNow();
+    statusEl.textContent = ok ? '✓ Sincronizado.' : 'Error al sincronizar.';
+    statusEl.className = 'sync-status ' + (ok ? 'ok' : 'err');
+  });
+
+  $('#sync-disconnect').addEventListener('click', async () => {
+    if (!confirm('¿Desconectar la sincronización en este dispositivo? Tus datos locales y los del repo se conservan.')) return;
+    sync = null;
+    remoteSha = null;
+    await dbDel(SYNC_KEY);
+    setSyncBadge('off');
+    closeSyncModal();
+    toast('Sincronización desconectada');
+  });
+
+  // Al volver a la pestaña, comprueba si hay cambios de otro dispositivo
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && sync && cryptoKey && !syncing) {
+      syncNow();
+    }
   });
 
   // Aviso si hay cambios pendientes de guardar al cerrar

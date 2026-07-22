@@ -3,6 +3,8 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: ["main", "claude/youtube-content-manager-d0soiy"]
+    paths-ignore:
+      - "vault/**"
   workflow_dispatch:
 
 permissions:
