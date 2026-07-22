@@ -619,7 +619,7 @@ function scheduleRemotePush() {
     try { await remotePush(); setSyncBadge('idle'); }
     catch (e) { console.error('push', e); setSyncBadge('idle'); toast('Fallo al subir cambios', 'err'); }
     finally { syncing = false; }
-  }, 2200);
+  }, 8000);
 }
 
 async function syncNow() {
@@ -752,8 +752,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function openSyncModal() {
     $('#sync-owner').value = (sync && sync.owner) || 'jnrElias';
     $('#sync-repo').value = (sync && sync.repo) || 'RDB';
-    $('#sync-branch').value = (sync && sync.branch) || 'vault-data';
-    $('#sync-path').value = (sync && sync.path) || 'vault.enc.json';
+    $('#sync-branch').value = (sync && sync.branch) || 'main';
+    $('#sync-path').value = (sync && sync.path) || 'datos/vault.enc.json';
     $('#sync-token').value = (sync && sync.token) || '';
     statusEl.textContent = sync ? '✓ Sincronización activa en este dispositivo.' : '';
     statusEl.className = 'sync-status' + (sync ? ' ok' : '');
@@ -770,8 +770,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#sync-save').addEventListener('click', async () => {
     const owner = $('#sync-owner').value.trim();
     const repo = $('#sync-repo').value.trim();
-    const branch = $('#sync-branch').value.trim() || 'vault-data';
-    const path = $('#sync-path').value.trim() || 'vault.enc.json';
+    const branch = $('#sync-branch').value.trim() || 'main';
+    const path = $('#sync-path').value.trim() || 'datos/vault.enc.json';
     const token = $('#sync-token').value.trim();
     if (!owner || !repo || !token) {
       statusEl.textContent = 'Rellena usuario, repositorio y token.';

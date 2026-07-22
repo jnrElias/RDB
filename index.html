@@ -4,8 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="theme-color" content="#0f0f14" />
+  <meta http-equiv="Cache-Control" content="no-cache, must-revalidate" />
   <title>YT Studio · Planificador</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=2" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23ff2d55'/%3E%3Cpath d='M40 32l28 18-28 18z' fill='white'/%3E%3C/svg%3E" />
 </head>
 <body>
@@ -94,12 +95,12 @@
           <input id="sync-repo" class="field-input" type="text" placeholder="RDB" />
         </div>
         <div class="field">
-          <label for="sync-branch">Rama de datos (se crea sola)</label>
-          <input id="sync-branch" class="field-input" type="text" placeholder="vault-data" />
+          <label for="sync-branch">Rama</label>
+          <input id="sync-branch" class="field-input" type="text" placeholder="main" />
         </div>
         <div class="field">
           <label for="sync-path">Ruta del archivo</label>
-          <input id="sync-path" class="field-input" type="text" placeholder="vault.enc.json" />
+          <input id="sync-path" class="field-input" type="text" placeholder="datos/vault.enc.json" />
         </div>
         <div class="field">
           <label for="sync-token">Token de acceso (fine-grained PAT)</label>
@@ -124,6 +125,6 @@
   <!-- toast -->
   <div id="toast" class="toast" hidden></div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

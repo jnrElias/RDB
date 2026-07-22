@@ -65,10 +65,9 @@ Esta web es **100% estática** (no tiene servidor). Eso implica:
 
 La web puede **guardar y sincronizar tus datos usando tu propio repositorio de
 GitHub**, sin ningún servidor extra. Así ves y editas todo desde el móvil y otros
-ordenadores. Tus datos se guardan **cifrados** en una **rama separada**
-(`vault-data`, que la app crea sola) en el archivo `vault.enc.json`, por lo que
-aunque el repo sea público nadie puede leer su contenido y los datos no afectan a
-la web publicada.
+ordenadores. Tus datos se guardan **cifrados** en tu rama `main`, en el archivo
+`datos/vault.enc.json`, por lo que aunque el repo sea público nadie puede leer su
+contenido.
 
 ### Cómo activarla (una vez por dispositivo)
 
@@ -80,9 +79,9 @@ la web publicada.
      **Read and write** (Metadata: Read-only se añade solo, es correcto).
    - **Generate token** y copia el código (empieza por `github_pat_...`).
 2. En la web, pulsa **☁ Sincronizar** (arriba a la derecha).
-3. Deja los valores por defecto (usuario `jnrElias`, repo `RDB`, rama `vault-data`,
-   ruta `vault.enc.json`) y pega el token.
-4. Pulsa **Conectar y sincronizar**. ¡Listo! (La rama `vault-data` se crea sola.)
+3. Deja los valores por defecto (usuario `jnrElias`, repo `RDB`, rama `main`,
+   ruta `datos/vault.enc.json`) y pega el token.
+4. Pulsa **Conectar y sincronizar**. ¡Listo!
 
 En cada dispositivo nuevo, repite los pasos 2–4 con el mismo token (o crea uno por
 dispositivo). El token se guarda **cifrado en el dispositivo**, nunca en el código.
