@@ -169,7 +169,7 @@ input, textarea { font-family: inherit; color: inherit; }
 .week.collapsed .week-body { display: none; }
 
 /* planning */
-.planning { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.planning { display: grid; grid-template-columns: 1fr; gap: 14px; }
 .plan-box label { display: block; font-size: 12.5px; font-weight: 620; color: var(--accent-2); margin-bottom: 7px; letter-spacing: .2px; }
 .field-input, textarea.field-input {
   width: 100%; background: rgba(0,0,0,0.24); border: 1px solid var(--border);

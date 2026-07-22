@@ -156,8 +156,7 @@ function newWeek(index) {
   return {
     id: 'w_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
     name: 'Semana ' + index,
-    planning1: '',
-    planning2: '',
+    planning: '',
     days: DAY_NAMES.map(newDay),
     collapsed: false,
   };
@@ -275,8 +274,7 @@ function renderWeek(week, index) {
   const head = el('div', { class: 'week-head' }, [toggle, nameInput, delBtn]);
 
   const planning = el('div', { class: 'planning' }, [
-    planBox('Planning semanal (1)', week.planning1, v => { week.planning1 = v; }),
-    planBox('Planning semanal (2)', week.planning2, v => { week.planning2 = v; }),
+    planBox('Planning semanal', week.planning, v => { week.planning = v; }),
   ]);
 
   const days = el('div', { class: 'days' }, week.days.map((d, di) => renderDay(week, d, di)));
