@@ -29,14 +29,13 @@ dispositivo (móvil, tablet, ordenador).
 
 ## 🚀 Cómo publicarla en GitHub Pages
 
-1. Sube estos archivos a tu repositorio (rama `main`).
-2. En GitHub, ve a **Settings → Pages**.
-3. En **Build and deployment → Source**, elige **GitHub Actions**.
-4. Espera a que termine el workflow "Deploy to GitHub Pages" (pestaña *Actions*).
-5. Tu web estará en: `https://<tu-usuario>.github.io/<tu-repo>/`
+1. En GitHub, ve a **Settings → Pages**.
+2. En **Build and deployment → Source**, elige **Deploy from a branch**.
+3. En **Branch**, elige **`main`** y carpeta **`/ (root)`** → **Save**.
+4. Espera ~1 minuto. Tu web estará en: `https://<tu-usuario>.github.io/<tu-repo>/`
 
-> Alternativa sencilla: en **Settings → Pages → Source** elige
-> **Deploy from a branch → `main` → `/ (root)`**.
+> Tras cualquier cambio, haz una **recarga forzada** (Ctrl+F5 / Cmd+Shift+R) para
+> ver la última versión sin caché.
 
 ## 🔐 Sobre la seguridad (importante y honesto)
 
@@ -66,20 +65,24 @@ Esta web es **100% estática** (no tiene servidor). Eso implica:
 
 La web puede **guardar y sincronizar tus datos usando tu propio repositorio de
 GitHub**, sin ningún servidor extra. Así ves y editas todo desde el móvil y otros
-ordenadores. Tus datos se guardan en un archivo **cifrado** (`vault/vault.enc.json`),
-por lo que aunque el repo sea público nadie puede leer su contenido.
+ordenadores. Tus datos se guardan **cifrados** en una **rama separada**
+(`vault-data`, que la app crea sola) en el archivo `vault.enc.json`, por lo que
+aunque el repo sea público nadie puede leer su contenido y los datos no afectan a
+la web publicada.
 
 ### Cómo activarla (una vez por dispositivo)
 
-1. Crea un **token de acceso** en GitHub:
-   - **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
-   - *Repository access*: solo este repositorio (`RDB`).
-   - *Permissions → Repository permissions → Contents*: **Read and write**.
-   - Copia el token (empieza por `github_pat_...`).
+1. Crea un **token de acceso** en GitHub (ajustes de tu cuenta, no del repo):
+   - Tu foto de perfil → **Settings** → abajo del todo → **Developer settings**.
+   - **Personal access tokens → Fine-grained tokens → Generate new token**.
+   - *Repository access*: **Only select repositories** → `RDB`.
+   - *Permissions → Repository permissions*: busca **Contents** y ponlo en
+     **Read and write** (Metadata: Read-only se añade solo, es correcto).
+   - **Generate token** y copia el código (empieza por `github_pat_...`).
 2. En la web, pulsa **☁ Sincronizar** (arriba a la derecha).
-3. Deja los valores por defecto (usuario `jnrElias`, repo `RDB`, rama `main`,
-   ruta `vault/vault.enc.json`) y pega el token.
-4. Pulsa **Conectar y sincronizar**. ¡Listo!
+3. Deja los valores por defecto (usuario `jnrElias`, repo `RDB`, rama `vault-data`,
+   ruta `vault.enc.json`) y pega el token.
+4. Pulsa **Conectar y sincronizar**. ¡Listo! (La rama `vault-data` se crea sola.)
 
 En cada dispositivo nuevo, repite los pasos 2–4 con el mismo token (o crea uno por
 dispositivo). El token se guarda **cifrado en el dispositivo**, nunca en el código.

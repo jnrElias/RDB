@@ -465,10 +465,12 @@ let sync = null;          // { owner, repo, branch, path, token }
 let remoteSha = null;     // sha del archivo remoto (para actualizarlo)
 let remotePushTimer = null;
 let syncing = false;
+let branchEnsured = false; // ¿comprobado/creada la rama de datos?
 
 async function loadSyncConfig() {
   sync = null;
   remoteSha = null;
+  branchEnsured = false;
   if (!cryptoKey) return;
   const enc = await dbGet(SYNC_KEY);
   if (!enc) return;
@@ -493,11 +495,35 @@ async function ghFetch(subpath, opts = {}) {
   });
 }
 
-// Descarga el vault remoto (o null si no existe todavía).
-async function remotePull() {
-  const res = await ghFetch(`/contents/${sync.path}?ref=${encodeURIComponent(sync.branch)}&t=${Date.now()}`, {
-    headers: { 'Cache-Control': 'no-cache' },
+// Crea la rama de datos si aún no existe (se ramifica de la rama por defecto).
+async function ensureBranch() {
+  if (branchEnsured) return;
+  const res = await ghFetch(`/branches/${encodeURIComponent(sync.branch)}`);
+  if (res.ok) { branchEnsured = true; return; }
+  if (res.status === 401 || res.status === 403) throw new Error('Token sin permisos o caducado');
+  if (res.status !== 404) throw new Error('No se pudo comprobar la rama (' + res.status + ')');
+
+  // La rama no existe: la creamos desde la rama por defecto del repo.
+  const repoRes = await ghFetch('');
+  if (!repoRes.ok) throw new Error('No se pudo leer el repositorio (' + repoRes.status + ')');
+  const def = (await repoRes.json()).default_branch;
+  const refRes = await ghFetch(`/git/ref/heads/${encodeURIComponent(def)}`);
+  if (!refRes.ok) throw new Error('No se pudo leer la rama base (' + refRes.status + ')');
+  const sha = (await refRes.json()).object.sha;
+  const createRes = await ghFetch('/git/refs', {
+    method: 'POST',
+    body: JSON.stringify({ ref: 'refs/heads/' + sync.branch, sha }),
   });
+  if (!createRes.ok && createRes.status !== 422) {
+    throw new Error('No se pudo crear la rama de datos (' + createRes.status + ')');
+  }
+  branchEnsured = true;
+}
+
+// Descarga el vault remoto (o null si no existe todavía).
+// (El parámetro ?t= evita la caché; no usamos cabeceras extra para no romper CORS.)
+async function remotePull() {
+  const res = await ghFetch(`/contents/${sync.path}?ref=${encodeURIComponent(sync.branch)}&t=${Date.now()}`);
   if (res.status === 404) { remoteSha = null; return null; }
   if (res.status === 401 || res.status === 403) throw new Error('Token sin permisos o caducado');
   if (!res.ok) throw new Error('GitHub GET ' + res.status);
@@ -510,6 +536,7 @@ async function remotePull() {
 
 // Sube el estado local al repo (crea o actualiza el archivo).
 async function remotePush() {
+  await ensureBranch();
   const payload = await encryptData(cryptoKey, state);
   const contentStr = JSON.stringify(payload);
   const b64 = btoa(unescape(encodeURIComponent(contentStr)));
@@ -725,8 +752,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function openSyncModal() {
     $('#sync-owner').value = (sync && sync.owner) || 'jnrElias';
     $('#sync-repo').value = (sync && sync.repo) || 'RDB';
-    $('#sync-branch').value = (sync && sync.branch) || 'main';
-    $('#sync-path').value = (sync && sync.path) || 'vault/vault.enc.json';
+    $('#sync-branch').value = (sync && sync.branch) || 'vault-data';
+    $('#sync-path').value = (sync && sync.path) || 'vault.enc.json';
     $('#sync-token').value = (sync && sync.token) || '';
     statusEl.textContent = sync ? '✓ Sincronización activa en este dispositivo.' : '';
     statusEl.className = 'sync-status' + (sync ? ' ok' : '');
@@ -743,8 +770,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#sync-save').addEventListener('click', async () => {
     const owner = $('#sync-owner').value.trim();
     const repo = $('#sync-repo').value.trim();
-    const branch = $('#sync-branch').value.trim() || 'main';
-    const path = $('#sync-path').value.trim() || 'vault/vault.enc.json';
+    const branch = $('#sync-branch').value.trim() || 'vault-data';
+    const path = $('#sync-path').value.trim() || 'vault.enc.json';
     const token = $('#sync-token').value.trim();
     if (!owner || !repo || !token) {
       statusEl.textContent = 'Rellena usuario, repositorio y token.';
@@ -755,6 +782,7 @@ document.addEventListener('DOMContentLoaded', () => {
     statusEl.className = 'sync-status';
     sync = { owner, repo, branch, path, token };
     remoteSha = null;
+    branchEnsured = false;
     const ok = await syncNow();
     if (ok) {
       await saveSyncConfig();
