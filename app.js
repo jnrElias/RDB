@@ -94,6 +94,7 @@ const DB_NAME = 'yt_studio_vault';
 const STORE = 'vault';
 const RECORD_KEY = 'data';
 const SYNC_KEY = 'sync';
+const SESSION_KEY = 'session_key'; // CryptoKey no extraíble guardada para "mantener sesión"
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -667,6 +668,28 @@ async function unlock(email, password) {
   return true;
 }
 
+// Guarda la clave (no extraíble) para mantener la sesión al recargar/reabrir.
+async function rememberSession() {
+  try { await dbSet(cryptoKey, SESSION_KEY); } catch (e) { console.error('rememberSession', e); }
+}
+
+// Intenta reabrir la sesión sin pedir contraseña (si se marcó "mantener sesión").
+async function tryAutoUnlock() {
+  try {
+    const savedKey = await dbGet(SESSION_KEY);
+    if (!savedKey) return false;
+    cryptoKey = savedKey;
+    const stored = await dbGet();
+    state = stored ? ensureMeta(await decryptData(cryptoKey, stored)) : defaultState();
+    return true;
+  } catch (e) {
+    console.error('auto-unlock', e);
+    cryptoKey = null;
+    await dbDel(SESSION_KEY).catch(() => {});
+    return false;
+  }
+}
+
 function enterApp() {
   $('#lock-screen').hidden = true;
   $('#app').hidden = false;
@@ -679,8 +702,10 @@ function lockApp() {
   state = null;
   sync = null;
   remoteSha = null;
+  branchEnsured = false;
   clearTimeout(saveTimer);
   clearTimeout(remotePushTimer);
+  dbDel(SESSION_KEY).catch(() => {}); // olvida la sesión guardada
   $('#app').hidden = true;
   $('#lock-screen').hidden = false;
   $('#password').value = '';
@@ -709,6 +734,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const ok = await unlock($('#email').value, $('#password').value);
       if (ok) {
+        if ($('#remember').checked) await rememberSession();
         enterApp();
       } else {
         errEl.hidden = false;
@@ -828,4 +854,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('beforeunload', e => {
     if (saveTimer && cryptoKey) { persist(); }
   });
+
+  // Al cargar: si hay sesión guardada, entra directamente sin pedir contraseña.
+  tryAutoUnlock().then(ok => { if (ok) enterApp(); });
 });

@@ -109,6 +109,9 @@ input, textarea { font-family: inherit; color: inherit; }
 .pw-toggle { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 9px; font-size: 16px; opacity: .7; }
 .pw-toggle:hover { opacity: 1; background: rgba(255,255,255,0.08); }
 
+.remember { display: flex; align-items: center; gap: 9px; margin: 4px 2px 14px; cursor: pointer; color: var(--text-dim); font-size: 13px; user-select: none; }
+.remember input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+
 .login-error { color: #ff8f8f; font-size: 13px; margin-top: 12px; text-align: center; }
 .login-error.shake { animation: shake .4s; }
 @keyframes shake { 0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-7px)} 40%,80%{transform:translateX(7px)} }

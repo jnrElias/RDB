@@ -8,6 +8,10 @@ dispositivo (móvil, tablet, ordenador).
 
 - **Acceso con credenciales** (correo + contraseña). Ni el correo ni la
   contraseña están escritos en el código: solo se guarda un *hash* irreversible.
+- **Mantener sesión iniciada** (opcional): marca la casilla al entrar y no tendrás
+  que iniciar sesión cada vez que recargues o reabras la web en ese dispositivo.
+  La clave de cifrado se guarda de forma **no extraíble** (el navegador no la
+  expone a nadie) y se borra al pulsar **Salir**.
 - **Cifrado AES-256-GCM**: toda tu información se guarda cifrada. La clave se
   deriva de tu contraseña al entrar y **solo vive en memoria** — nunca se guarda.
   Sin tu contraseña, los datos son ilegibles incluso desde la consola del navegador.
