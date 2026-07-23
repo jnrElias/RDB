@@ -530,7 +530,15 @@ async function remotePull() {
   if (!res.ok) throw new Error('GitHub GET ' + res.status);
   const json = await res.json();
   remoteSha = json.sha;
-  const contentStr = decodeURIComponent(escape(atob((json.content || '').replace(/\n/g, ''))));
+  let b64 = json.content || '';
+  // La API de contenidos no devuelve archivos > 1 MB (content vacío): usamos blobs.
+  if (!b64 && json.sha) {
+    const blobRes = await ghFetch(`/git/blobs/${json.sha}?t=${Date.now()}`);
+    if (!blobRes.ok) throw new Error('GitHub blob ' + blobRes.status);
+    b64 = (await blobRes.json()).content || '';
+  }
+  if (!b64) throw new Error('El archivo remoto está vacío');
+  const contentStr = decodeURIComponent(escape(atob(b64.replace(/\n/g, ''))));
   const payload = JSON.parse(contentStr);
   return await decryptData(cryptoKey, payload);
 }
