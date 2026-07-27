@@ -151,6 +151,9 @@ function newDay(name) {
     tags: '',
     pinnedComment: '',
     thumbnailPrompt: '',
+    transcription: '',   // transcripción en texto
+    imageScript: '',     // guion de imágenes (texto)
+    audio: null,         // { name, type, dataUrl } audio del vídeo
   };
 }
 function newWeek(index) {
@@ -169,6 +172,12 @@ function defaultState() {
 function ensureMeta(s) {
   if (!s.meta) s.meta = { updatedAt: Date.now(), rev: 1 };
   return s;
+}
+// ¿El contenido real (no los metadatos) es idéntico? Sirve para NO redibujar
+// —y así no cerrar menús ni perder el foco— cuando la sincronización no trae cambios.
+function sameWeeks(a, b) {
+  try { return JSON.stringify(a && a.weeks) === JSON.stringify(b && b.weeks); }
+  catch { return false; }
 }
 function bumpMeta() {
   ensureMeta(state);
@@ -302,7 +311,11 @@ function planBox(label, value, onChange) {
   return el('div', { class: 'plan-box' }, [el('label', { text: label }), ta]);
 }
 
+// Menús de día abiertos (en memoria), para no cerrarlos al redibujar/sincronizar.
+const openDays = new Set();
+
 function renderDay(week, day, index) {
+  const key = week.id + ':' + index;
   const chip = el('span', { class: 'day-chip', text: day.name });
   const preview = el('span', {
     class: 'day-title-preview' + (day.title ? ' has' : ''),
@@ -319,16 +332,32 @@ function renderDay(week, day, index) {
       preview.textContent = v || 'Sin título';
       preview.classList.toggle('has', !!v);
     }, false),
-    renderThumbBlock(week, day),
+    renderFileBlock(day, 'thumbnail', {
+      label: 'Miniatura del día', accept: 'image/*', kind: 'image',
+      emptyText: 'Sin miniatura · sube una imagen',
+      uploadText: '⬆ Subir miniatura', changeText: '🔄 Cambiar',
+      defaultName: 'miniatura.png', savedMsg: 'Miniatura guardada',
+    }),
     dayField('Guion del vídeo', day.script, v => { day.script = v; }, true, 5),
+    dayField('Guion de imágenes', day.imageScript, v => { day.imageScript = v; }, true, 4),
+    dayField('Transcripción del vídeo', day.transcription, v => { day.transcription = v; }, true, 5),
+    renderFileBlock(day, 'audio', {
+      label: 'Audio del vídeo', accept: 'audio/*', kind: 'audio',
+      emptyText: 'Sin audio · sube un archivo de audio',
+      uploadText: '⬆ Subir audio', changeText: '🔄 Cambiar audio',
+      defaultName: 'audio.mp3', savedMsg: 'Audio guardado',
+    }),
     dayField('Descripción del vídeo', day.description, v => { day.description = v; }, true, 4),
     dayField('Etiquetas del vídeo', day.tags, v => { day.tags = v; }, true, 2),
     dayField('Comentario a fijar', day.pinnedComment, v => { day.pinnedComment = v; }, true, 2),
     dayField('Prompt de la miniatura', day.thumbnailPrompt, v => { day.thumbnailPrompt = v; }, true, 3),
   ]);
 
-  const wrap = el('div', { class: 'day' }, [head, body]);
-  head.addEventListener('click', () => wrap.classList.toggle('open'));
+  const wrap = el('div', { class: 'day' + (openDays.has(key) ? ' open' : '') }, [head, body]);
+  head.addEventListener('click', () => {
+    const nowOpen = wrap.classList.toggle('open');
+    if (nowOpen) openDays.add(key); else openDays.delete(key);
+  });
   return wrap;
 }
 
@@ -350,16 +379,22 @@ function dayField(label, value, onChange, multiline, rows = 3) {
   return el('div', { class: 'day-field' }, [el('label', { text: label }), input]);
 }
 
-function renderThumbBlock(week, day) {
-  const preview = el('div', { class: 'thumb-preview' });
-  const fileInput = el('input', { type: 'file', accept: 'image/*', hidden: true });
+// Bloque genérico de archivo (imagen o audio): subir / cambiar / descargar / eliminar.
+function renderFileBlock(day, prop, opts) {
+  const preview = el('div', { class: 'thumb-preview' + (opts.kind === 'audio' ? ' audio' : '') });
+  const fileInput = el('input', { type: 'file', accept: opts.accept, hidden: true });
 
   function paint() {
     preview.innerHTML = '';
-    if (day.thumbnail && day.thumbnail.dataUrl) {
-      preview.appendChild(el('img', { src: day.thumbnail.dataUrl, alt: 'Miniatura' }));
+    const f = day[prop];
+    if (f && f.dataUrl) {
+      if (opts.kind === 'audio') {
+        preview.appendChild(el('audio', { src: f.dataUrl, controls: true, preload: 'metadata' }));
+      } else {
+        preview.appendChild(el('img', { src: f.dataUrl, alt: opts.label }));
+      }
     } else {
-      preview.appendChild(el('div', { class: 'thumb-placeholder', text: 'Sin miniatura · sube una imagen' }));
+      preview.appendChild(el('div', { class: 'thumb-placeholder', text: opts.emptyText }));
     }
   }
   paint();
@@ -369,13 +404,11 @@ function renderThumbBlock(week, day) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      day.thumbnail = { name: file.name, type: file.type, dataUrl: reader.result };
-      paint();
-      updateActions();
-      scheduleSave();
-      toast('Miniatura guardada', 'ok');
+      day[prop] = { name: file.name, type: file.type, dataUrl: reader.result };
+      paint(); updateActions(); scheduleSave();
+      toast(opts.savedMsg, 'ok');
     };
-    reader.onerror = () => toast('No se pudo leer la imagen', 'err');
+    reader.onerror = () => toast('No se pudo leer el archivo', 'err');
     reader.readAsDataURL(file);
     fileInput.value = '';
   });
@@ -385,30 +418,31 @@ function renderThumbBlock(week, day) {
   const deleteBtn = el('button', { class: 'btn-mini danger', text: '🗑 Eliminar' });
 
   downloadBtn.addEventListener('click', () => {
-    if (!day.thumbnail) return;
-    const a = el('a', { href: day.thumbnail.dataUrl, download: day.thumbnail.name || 'miniatura.png' });
+    const f = day[prop];
+    if (!f) return;
+    const a = el('a', { href: f.dataUrl, download: f.name || opts.defaultName });
     document.body.appendChild(a); a.click(); a.remove();
   });
   deleteBtn.addEventListener('click', () => {
-    if (!day.thumbnail) return;
-    if (confirm('¿Eliminar la miniatura de este día?')) {
-      day.thumbnail = null;
+    if (!day[prop]) return;
+    if (confirm('¿Eliminar este archivo?')) {
+      day[prop] = null;
       paint(); updateActions(); scheduleSave();
-      toast('Miniatura eliminada');
+      toast('Archivo eliminado');
     }
   });
 
   const actions = el('div', { class: 'thumb-actions' }, [uploadBtn, downloadBtn, deleteBtn]);
   function updateActions() {
-    const has = !!day.thumbnail;
-    uploadBtn.textContent = has ? '🔄 Cambiar' : '⬆ Subir miniatura';
+    const has = !!day[prop];
+    uploadBtn.textContent = has ? opts.changeText : opts.uploadText;
     downloadBtn.style.display = has ? '' : 'none';
     deleteBtn.style.display = has ? '' : 'none';
   }
   updateActions();
 
   return el('div', { class: 'day-field thumb-block' }, [
-    el('label', { text: 'Miniatura del día' }),
+    el('label', { text: opts.label }),
     preview, fileInput, actions,
   ]);
 }
@@ -561,10 +595,14 @@ async function remotePush() {
   if (res.status === 409 || res.status === 422) {
     const remote = await remotePull(); // refresca remoteSha
     if (remote && remote.meta && remote.meta.updatedAt > (state.meta?.updatedAt || 0)) {
-      state = ensureMeta(remote);
-      renderAll();
+      if (!sameWeeks(remote, state)) {
+        state = ensureMeta(remote);
+        renderAll();
+        toast('Se cargó una versión más reciente de otro dispositivo', 'ok');
+      } else {
+        state.meta = remote.meta;
+      }
       await persistLocalOnly();
-      toast('Se cargó una versión más reciente de otro dispositivo', 'ok');
       return;
     }
     body.sha = remoteSha;
@@ -594,6 +632,13 @@ function setSyncBadge(mode) {
 async function reconcile() {
   const remote = await remotePull();
   if (remote && remote.meta && remote.meta.updatedAt >= (state.meta?.updatedAt || 0)) {
+    if (sameWeeks(remote, state)) {
+      // Sin cambios reales: solo actualizamos metadatos, SIN redibujar (mantenemos
+      // el objeto de estado y el DOM tal cual, para no cerrar menús ni perder el foco).
+      state.meta = remote.meta;
+      await persistLocalOnly();
+      return 'pulled';
+    }
     state = ensureMeta(remote);
     renderAll();
     await persistLocalOnly();
