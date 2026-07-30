@@ -577,40 +577,101 @@ async function remotePull() {
   return await decryptData(cryptoKey, payload);
 }
 
-// Sube el estado local al repo (crea o actualiza el archivo).
-async function remotePush() {
+/* ---------- FUSIÓN (merge) campo por campo ----------
+   Une el contenido de dos versiones sin perder nada: para cada campo se
+   conserva el valor no vacío; si ambos tienen valor distinto, gana la versión
+   más reciente (que se pasa siempre como primer argumento "w" = winner). */
+function mergeScalar(w, l) {
+  w = (w == null) ? '' : w; l = (l == null) ? '' : l;
+  return w !== '' ? w : l;
+}
+function mergeFile(w, l) { return w || l || null; }
+function mergeDay(w, l) {
+  w = w || {}; l = l || {};
+  return {
+    name: w.name || l.name,
+    title: mergeScalar(w.title, l.title),
+    thumbnail: mergeFile(w.thumbnail, l.thumbnail),
+    script: mergeScalar(w.script, l.script),
+    description: mergeScalar(w.description, l.description),
+    tags: mergeScalar(w.tags, l.tags),
+    pinnedComment: mergeScalar(w.pinnedComment, l.pinnedComment),
+    thumbnailPrompt: mergeScalar(w.thumbnailPrompt, l.thumbnailPrompt),
+    transcription: mergeScalar(w.transcription, l.transcription),
+    imageScript: mergeScalar(w.imageScript, l.imageScript),
+    audio: mergeFile(w.audio, l.audio),
+  };
+}
+function mergeWeek(w, l) {
+  const dw = w.days || [], dl = l.days || [];
+  const n = Math.max(dw.length, dl.length, 7);
+  const days = [];
+  for (let i = 0; i < n; i++) days.push(mergeDay(dw[i], dl[i]));
+  return {
+    id: w.id || l.id,
+    name: mergeScalar(w.name, l.name),
+    planning: mergeScalar(w.planning, l.planning),
+    days,
+    collapsed: !!w.collapsed,
+  };
+}
+// Fusiona dos estados. La estructura de semanas (nº de semanas) la marca la
+// versión más reciente; el contenido de cada semana/día se une campo por campo.
+function mergeStates(a, b) {
+  const aT = (a && a.meta && a.meta.updatedAt) || 0;
+  const bT = (b && b.meta && b.meta.updatedAt) || 0;
+  const [w, l] = aT >= bT ? [a, b] : [b, a];
+  const ww = w.weeks || [], lw = l.weeks || [];
+  const weeks = ww.map((wk, i) => (lw[i] ? mergeWeek(wk, lw[i]) : wk));
+  return {
+    weeks,
+    meta: {
+      updatedAt: Math.max(aT, bT),
+      rev: Math.max((a && a.meta && a.meta.rev) || 0, (b && b.meta && b.meta.rev) || 0),
+    },
+  };
+}
+
+// Escribe el estado actual en el repo (PUT). En conflicto, refusiona y reintenta.
+async function writeRemote(retries = 2) {
   await ensureBranch();
   const payload = await encryptData(cryptoKey, state);
-  const contentStr = JSON.stringify(payload);
-  const b64 = btoa(unescape(encodeURIComponent(contentStr)));
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
   const body = {
     message: 'chore(vault): update ' + new Date().toISOString(),
     content: b64,
     branch: sync.branch,
   };
   if (remoteSha) body.sha = remoteSha;
-  let res = await ghFetch(`/contents/${sync.path}`, { method: 'PUT', body: JSON.stringify(body) });
-
-  // Conflicto: otro dispositivo escribió. Resolvemos por marca de tiempo.
-  if (res.status === 409 || res.status === 422) {
-    const remote = await remotePull(); // refresca remoteSha
-    if (remote && remote.meta && remote.meta.updatedAt > (state.meta?.updatedAt || 0)) {
-      if (!sameWeeks(remote, state)) {
-        state = ensureMeta(remote);
-        renderAll();
-        toast('Se cargó una versión más reciente de otro dispositivo', 'ok');
-      } else {
-        state.meta = remote.meta;
-      }
-      await persistLocalOnly();
-      return;
-    }
-    body.sha = remoteSha;
-    res = await ghFetch(`/contents/${sync.path}`, { method: 'PUT', body: JSON.stringify(body) });
+  const res = await ghFetch(`/contents/${sync.path}`, { method: 'PUT', body: JSON.stringify(body) });
+  if ((res.status === 409 || res.status === 422) && retries > 0) {
+    await pullAndMerge();           // trae lo que escribió el otro y lo fusiona
+    return writeRemote(retries - 1);
   }
   if (!res.ok) throw new Error('GitHub PUT ' + res.status);
   const json = await res.json();
   remoteSha = json.content && json.content.sha;
+}
+
+// Descarga el remoto y lo FUSIONA con el estado local (sin perder campos).
+// Devuelve { remote, localMissing, remoteMissing }.
+async function pullAndMerge() {
+  const remote = await remotePull(); // fija remoteSha (o null si no existe)
+  if (!remote) return { remote: null, localMissing: false, remoteMissing: true };
+  const merged = mergeStates(state, remote);
+  const localMissing = !sameWeeks(state, merged);   // el local no tenía algo del remoto
+  const remoteMissing = !sameWeeks(remote, merged);  // el remoto no tenía algo del local
+  if (localMissing) {
+    state = ensureMeta(merged);
+    renderAll();
+  } else {
+    state.meta = {
+      updatedAt: Math.max(state.meta?.updatedAt || 0, remote.meta?.updatedAt || 0),
+      rev: Math.max(state.meta?.rev || 0, remote.meta?.rev || 0),
+    };
+  }
+  await persistLocalOnly();
+  return { remote, localMissing, remoteMissing };
 }
 
 async function persistLocalOnly() {
@@ -627,25 +688,18 @@ function setSyncBadge(mode) {
   if (label) label.textContent = sync ? (mode === 'syncing' ? 'Sincronizando' : 'Sincronizado') : 'Sincronizar';
 }
 
-// Decide entre estado local y remoto y los reconcilia por marca de tiempo.
-// Gana el que tenga meta.updatedAt más reciente (un estado por defecto vale 0).
+// Reconciliar (al entrar / al volver a la pestaña / sincronizar): fusiona y,
+// si el remoto no tiene algo que tenemos, sube el resultado.
 async function reconcile() {
-  const remote = await remotePull();
-  if (remote && remote.meta && remote.meta.updatedAt >= (state.meta?.updatedAt || 0)) {
-    if (sameWeeks(remote, state)) {
-      // Sin cambios reales: solo actualizamos metadatos, SIN redibujar (mantenemos
-      // el objeto de estado y el DOM tal cual, para no cerrar menús ni perder el foco).
-      state.meta = remote.meta;
-      await persistLocalOnly();
-      return 'pulled';
-    }
-    state = ensureMeta(remote);
-    renderAll();
-    await persistLocalOnly();
-    return 'pulled';
-  }
-  await remotePush(); // local más reciente (o remoto vacío)
-  return 'pushed';
+  const { remote, localMissing, remoteMissing } = await pullAndMerge();
+  if (!remote || remoteMissing) await writeRemote();
+  return localMissing ? 'pulled' : 'pushed';
+}
+
+// Empujar tras una edición: primero fusiona el remoto (no pisar a otros) y sube.
+async function pushLocal() {
+  await pullAndMerge();
+  await writeRemote();
 }
 
 // Sincroniza al entrar.
@@ -670,7 +724,7 @@ function scheduleRemotePush() {
   remotePushTimer = setTimeout(async () => {
     if (syncing) { scheduleRemotePush(); return; }
     syncing = true;
-    try { await remotePush(); setSyncBadge('idle'); }
+    try { await pushLocal(); setSyncBadge('idle'); }
     catch (e) { console.error('push', e); setSyncBadge('idle'); toast('Fallo al subir cambios', 'err'); }
     finally { syncing = false; }
   }, 8000);
